@@ -1,0 +1,10 @@
+le-wm-ref/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.hydra/
+outputs/
+wandb/
+*.ckpt
+*.pt
