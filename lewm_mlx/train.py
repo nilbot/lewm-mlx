@@ -9,7 +9,7 @@ import argparse
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -19,6 +19,7 @@ from mlx.utils import tree_flatten
 from lewm_mlx.dataset import PushTMiniDataset
 from lewm_mlx.jepa import JEPA
 from lewm_mlx.module import ARPredictor, Embedder, MLP, SIGReg
+from lewm_mlx.preprocessing import imagenet_normalize
 from lewm_mlx.vit import ViTModel
 
 
@@ -142,6 +143,18 @@ def main() -> None:
         default=0,
         help="Log per-step telemetry every N steps within each epoch (0 disables per-step logging)",
     )
+    parser.add_argument(
+        "--norm-fn",
+        type=str,
+        choices=["batchnorm", "layernorm", "none"],
+        default="batchnorm",
+        help="Normalization layer in projection heads (default: batchnorm, matching PyTorch reference)",
+    )
+    parser.add_argument(
+        "--no-imagenet-norm",
+        action="store_true",
+        help="Disable ImageNet pixel normalization (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])",
+    )
     args = parser.parse_args()
 
     # Configure action dimension depending on dataset choice:
@@ -190,19 +203,26 @@ def main() -> None:
         emb_dim=args.embed_dim,
     )
 
+    # Configure MLP projection normalization head
+    norm_cls = None
+    if args.norm_fn == "batchnorm":
+        norm_cls = nn.BatchNorm
+    elif args.norm_fn == "layernorm":
+        norm_cls = nn.LayerNorm
+
     # Projection heads
     projector = MLP(
         input_dim=args.embed_dim,
         hidden_dim=256,
         output_dim=args.embed_dim,
-        norm_fn=nn.LayerNorm,
+        norm_fn=norm_cls,
     )
 
     pred_proj = MLP(
         input_dim=args.embed_dim,
         hidden_dim=256,
         output_dim=args.embed_dim,
-        norm_fn=nn.LayerNorm,
+        norm_fn=norm_cls,
     )
 
     # Joint-Embedding Predictive Architecture (JEPA)
@@ -249,8 +269,15 @@ def main() -> None:
         actions = batch["action"]
         actions = mx.where(mx.isnan(actions), mx.array(0.0), actions)
 
+        # Standardize visual observations with ImageNet channel statistics,
+        # matching the reference preprocessing (le-wm-ref/utils.py).
+        # [B, T, 3, H, W] frames -> zero-mean, unit-variance per channel.
+        pixels = batch["pixels"]
+        if not args.no_imagenet_norm:
+            pixels = imagenet_normalize(pixels)
+
         batch_new = {
-            "pixels": batch["pixels"],
+            "pixels": pixels,
             "action": actions,
         }
 
@@ -397,11 +424,13 @@ def main() -> None:
         # Evaluate on fixed held-out probe if requested
         val_telemetry = {}
         if eval_batch is not None:
+            model.eval()
             _, val_dict = loss_fn(model, eval_batch)
             mx.eval(val_dict)
             val_telemetry = {
                 f"val_{k}": v.item() for k, v in val_dict.items()
             }
+            model.train()
 
         # Compose informative console log
         log_parts = [

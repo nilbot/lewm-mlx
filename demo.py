@@ -22,6 +22,7 @@ from lewm_mlx.dataset import PushTMiniDataset
 from lewm_mlx.jepa import JEPA
 from lewm_mlx.module import ARPredictor, Embedder, MLP
 from lewm_mlx.planner import CEMPlanner, ShootingPlanner
+from lewm_mlx.preprocessing import imagenet_normalize
 from lewm_mlx.vit import ViTModel
 
 
@@ -32,6 +33,7 @@ def build_model(
     frameskip: int,
     weights_path: Optional[str] = None,
     explicit_weights: bool = False,
+    norm_fn: str = "batchnorm",
 ) -> JEPA:
     r"""Builds and initializes the Joint-Embedding Predictive Architecture (JEPA).
 
@@ -51,11 +53,22 @@ def build_model(
         frameskip: Action chunking and downsampling factor (:math:`F`).
         weights_path: Optional path to serialized model weights archive (.npz).
         explicit_weights: Whether the weights path was explicitly supplied by user.
+        norm_fn: Normalization layer inside the projection heads; must match the
+            checkpoint configuration (``"batchnorm"``, ``"layernorm"``, or ``"none"``).
 
     Returns:
         Configured JEPA model set to evaluation mode.
     """
     action_dim = frameskip * 2
+
+    # Projection-head normalization must match the checkpoint produced by
+    # lewm_mlx/train.py (default: BatchNorm, mirroring the PyTorch reference).
+    if norm_fn == "batchnorm":
+        norm_cls = nn.BatchNorm
+    elif norm_fn == "layernorm":
+        norm_cls = nn.LayerNorm
+    else:
+        norm_cls = None
 
     # ViT visual encoder for patch-based representation
     encoder = ViTModel(
@@ -90,13 +103,13 @@ def build_model(
         input_dim=embed_dim,
         hidden_dim=256,
         output_dim=embed_dim,
-        norm_fn=nn.LayerNorm,
+        norm_fn=norm_cls,
     )
     pred_proj = MLP(
         input_dim=embed_dim,
         hidden_dim=256,
         output_dim=embed_dim,
-        norm_fn=nn.LayerNorm,
+        norm_fn=norm_cls,
     )
 
     model = JEPA(
@@ -522,6 +535,18 @@ def main() -> None:
         default=None,
         help="Local directory for dataset cache archive",
     )
+    parser.add_argument(
+        "--norm-fn",
+        type=str,
+        choices=["batchnorm", "layernorm", "none"],
+        default="batchnorm",
+        help="Normalization layer in projection heads; must match the checkpoint (default: batchnorm)",
+    )
+    parser.add_argument(
+        "--no-imagenet-norm",
+        action="store_true",
+        help="Disable ImageNet pixel normalization; pass when the checkpoint was trained with --no-imagenet-norm",
+    )
 
     args = parser.parse_args()
 
@@ -544,6 +569,7 @@ def main() -> None:
         frameskip=args.frameskip,
         weights_path=args.weights,
         explicit_weights=explicit_weights,
+        norm_fn=args.norm_fn,
     )
 
     # Load demonstration dataset
@@ -561,6 +587,15 @@ def main() -> None:
         num_preds=args.horizon + 1,
     )
 
+    # Standardize model inputs exactly as in training (train.py); the raw batch is
+    # preserved for the diagnostic plot so frames remain in their original [0, 1] range.
+    model_batch = batch
+    if not args.no_imagenet_norm:
+        model_batch = {
+            **batch,
+            "pixels": imagenet_normalize(batch["pixels"]),
+        }
+
     planning_horizon = args.history_size + args.horizon
     goal_frame = batch["pixels"][0, planning_horizon]
 
@@ -572,7 +607,7 @@ def main() -> None:
     if args.mode in ("rollout", "both"):
         step_indices, mse_errors = run_rollout(
             model=model,
-            batch=batch,
+            batch=model_batch,
             history_size=args.history_size,
             horizon=args.horizon,
         )
@@ -581,7 +616,7 @@ def main() -> None:
         action_dim = args.frameskip * 2
         shooting_cost, _, cem_cost_history = run_planning(
             model=model,
-            batch=batch,
+            batch=model_batch,
             history_size=args.history_size,
             horizon=args.horizon,
             action_dim=action_dim,

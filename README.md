@@ -71,6 +71,13 @@ The training script includes real-time telemetry to monitor optimization health 
 * `--metrics-path <path.jsonl>`: Dumps structured JSON Lines telemetry for offline analysis and curve plotting.
 * `--log-interval <N>`: Displays step-level metrics every $N$ steps inside each epoch (default: `0`, epoch-level summary).
 
+### Reference-Aligned Preprocessing
+
+Projection heads default to `BatchNorm` and frames are standardized with ImageNet channel statistics ($\mu = (0.485, 0.456, 0.406)$, $\sigma = (0.229, 0.224, 0.225)$), matching the PyTorch reference configuration. Both are switchable to reproduce the earlier MLX-only settings:
+
+* `--norm-fn {batchnorm,layernorm,none}`: Normalization layer inside the projector and prediction-projection MLPs. `layernorm` reproduces the degenerate configuration that collapsed embeddings to a constant.
+* `--no-imagenet-norm`: Disables frame standardization (default: enabled).
+
 ### Quick Smoke Test
 
 To verify the training loop with synthetic kinematics batches without downloading datasets:
@@ -111,6 +118,8 @@ uv run python demo.py \
   uv run python demo.py --mode plan --num-episodes 5 --img-size 96 --save-plot plan.png
   ```
 
+The demo standardizes frames with the same ImageNet channel statistics used during training before encoding. Keep `--norm-fn` and `--no-imagenet-norm` consistent with the checkpoint being evaluated.
+
 ### CLI Arguments
 
 | Argument | Type | Default | Description |
@@ -125,6 +134,8 @@ uv run python demo.py \
 | `--horizon` | `int` | `5` | Forward prediction / planning horizon ($K$). |
 | `--save-plot` | `str` | `pusht_demo.png` | Destination path for diagnostic plot. |
 | `--cache-dir` | `str` | `None` | Local directory for cached dataset archives. |
+| `--norm-fn` | `str` | `batchnorm` | Projection-head normalization; must match the checkpoint (`batchnorm`, `layernorm`, or `none`). |
+| `--no-imagenet-norm` | flag | off | Disable ImageNet frame standardization; required for checkpoints trained with `--no-imagenet-norm`. |
 
 ---
 
@@ -136,7 +147,7 @@ Run the complete test suite across architectural equivalence, dataset caching, p
 uv run pytest tests/ -v
 ```
 
-All 28 tests across the repository verify numerical correctness, gradient propagation, and interface parity against the PyTorch reference implementation.
+All 33 tests across the repository verify numerical correctness, gradient propagation, and interface parity against the PyTorch reference implementation.
 
 ---
 

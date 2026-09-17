@@ -137,6 +137,97 @@ def test_demo_cli_with_weights(tmp_path):
     assert plot_path.exists()
 
 
+def test_demo_cli_loads_batchnorm_checkpoint(tmp_path):
+    """Verifies demo CLI loads checkpoints trained with the default BatchNorm heads."""
+    from demo import build_model
+
+    weights_path = tmp_path / "batchnorm_weights.npz"
+    model = build_model(
+        img_size=96,
+        embed_dim=64,
+        history_size=2,
+        frameskip=5,
+        weights_path=None,
+        norm_fn="batchnorm",
+    )
+    model.save_weights(str(weights_path))
+
+    plot_path = tmp_path / "test_batchnorm_demo.png"
+    cmd = [
+        sys.executable,
+        "demo.py",
+        "--weights",
+        str(weights_path),
+        "--mode",
+        "rollout",
+        "--num-episodes",
+        "2",
+        "--horizon",
+        "2",
+        "--history-size",
+        "2",
+        "--img-size",
+        "96",
+        "--save-plot",
+        str(plot_path),
+        "--cache-dir",
+        str(tmp_path / "cache"),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode == 0, (
+        f"demo.py failed with stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
+    )
+    assert f"Loading model weights from '{weights_path}'" in res.stdout
+    assert plot_path.exists()
+
+
+def test_demo_cli_loads_legacy_layernorm_checkpoint(tmp_path):
+    """Verifies legacy LayerNorm checkpoints load with matching preprocessing flags."""
+    from demo import build_model
+
+    weights_path = tmp_path / "layernorm_weights.npz"
+    model = build_model(
+        img_size=96,
+        embed_dim=64,
+        history_size=2,
+        frameskip=5,
+        weights_path=None,
+        norm_fn="layernorm",
+    )
+    model.save_weights(str(weights_path))
+
+    plot_path = tmp_path / "test_layernorm_demo.png"
+    cmd = [
+        sys.executable,
+        "demo.py",
+        "--weights",
+        str(weights_path),
+        "--mode",
+        "rollout",
+        "--num-episodes",
+        "2",
+        "--horizon",
+        "2",
+        "--history-size",
+        "2",
+        "--img-size",
+        "96",
+        "--norm-fn",
+        "layernorm",
+        "--no-imagenet-norm",
+        "--save-plot",
+        str(plot_path),
+        "--cache-dir",
+        str(tmp_path / "cache"),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode == 0, (
+        f"demo.py failed with stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
+    )
+    assert f"Loading model weights from '{weights_path}'" in res.stdout
+    assert plot_path.exists()
+
+
 def test_demo_programmatic_api():
     """Verifies direct in-process programmatic execution of demo components."""
     import mlx.core as mx

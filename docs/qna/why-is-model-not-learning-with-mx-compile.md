@@ -57,3 +57,5 @@ mx.eval(loss, metrics, state)
 - **Pure functions (e.g., mathematical transformations, loss reductions)**: Use `@mx.compile`.
 - **Functions reading or writing `nn.Module` parameters or `Optimizer` states**: **Never** use bare `@mx.compile`. Always pass `inputs=state, outputs=state` with `state = [model.state, optimizer.state]`.
 - **Instrumentation guard**: Always monitor global gradient norm $\|\mathbf{g}\|_2$ and target prediction cosine similarity $\cos(\hat{\mathbf{s}}, \mathbf{s})$. If $\cos(\hat{\mathbf{s}}, \mathbf{s})$ fails to rise above $\approx 0.0$ while loss remains invariant across epochs, verify that the compiled graph is bound to the live parameter state.
+
+Related: a compiled graph can also be correctly bound while the representation still fails to learn. Projector `LayerNorm` heads collapse embeddings to a constant (`EmbStd` ~ 0.0002, `Pred` ~ 0); see [2026-09-17-train-collapse-layernorm-projectors.md](../journal/2026-09-17-train-collapse-layernorm-projectors.md).
