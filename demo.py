@@ -7,7 +7,7 @@ environment, producing tabular error metrics and visual multi-panel diagnostic p
 
 import argparse
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -155,8 +155,9 @@ def run_rollout(
     # Initial context history: [1, 1, H, 3, H_img, W_img]
     context_pixels = pixels[:, :history_size]
     rollout_info = {"pixels": mx.expand_dims(context_pixels, 1)}
-    # Full action trajectory: [1, 1, T, action_dim]
-    rollout_actions = mx.expand_dims(actions, 1)
+    # Action trajectory up to planning horizon T = history_size + horizon
+    action_seq_len = history_size + horizon
+    rollout_actions = mx.expand_dims(actions[:, :action_seq_len], 1)
 
     # Execute latent autoregressive rollout
     rollout_out = model.rollout(
@@ -164,8 +165,8 @@ def run_rollout(
     )
     pred_emb = rollout_out["predicted_emb"]  # [1, 1, T_pred, D]
 
-    # Encode ground-truth frames across entire trajectory: [1, T, D]
-    gt_out = model.encode({"pixels": pixels})
+    # Encode ground-truth frames across trajectory: [1, T, D]
+    gt_out = model.encode({"pixels": pixels[:, :action_seq_len]})
     gt_emb = gt_out["emb"]  # [1, T, D]
 
     print()
@@ -213,7 +214,7 @@ def run_planning(
 
     Args:
         model: Evaluated JEPA model instance.
-        batch: Trajectory dictionary with "pixels" key.
+        batch: Trajectory dictionary with "pixels" key containing at least $T + 1$ frames.
         history_size: Context history length (:math:`H`).
         horizon: Planning prediction horizon (:math:`K`).
         action_dim: Dimensionality of action vectors (:math:`D_{\text{act}} = 2 \times F`).
@@ -224,13 +225,13 @@ def run_planning(
             cem_cost: Objective cost achieved by cross-entropy method optimizer.
             cem_cost_history: Cost trace across CEM iterations.
     """
-    pixels = batch["pixels"]  # [1, T, 3, H_img, W_img]
-    planning_horizon = history_size + horizon
+    pixels = batch["pixels"]  # [1, T + 1, 3, H_img, W_img]
+    planning_horizon = history_size + horizon  # T
 
     # Context observation frames: [1, 1, H, 3, H_img, W_img]
     init_pixels = mx.expand_dims(pixels[:, :history_size], 1)
-    # Distant target goal observation frame: [1, 1, 1, 3, H_img, W_img]
-    goal_pixels = mx.expand_dims(pixels[:, planning_horizon - 1 : planning_horizon], 1)
+    # Distant target goal observation frame at t = planning_horizon: [1, 1, 1, 3, H_img, W_img]
+    goal_pixels = mx.expand_dims(pixels[:, planning_horizon : planning_horizon + 1], 1)
 
     plan_info = {
         "pixels": init_pixels,
@@ -286,6 +287,7 @@ def save_diagnostic_plot(
     batch: Dict[str, mx.array],
     history_size: int,
     horizon: int,
+    goal_frame: Optional[Any] = None,
     step_indices: Optional[List[int]] = None,
     mse_errors: Optional[List[float]] = None,
     shooting_cost: Optional[float] = None,
@@ -295,7 +297,7 @@ def save_diagnostic_plot(
 
     Creates a 2x3 subplot grid containing:
         - Top row: Observation context frames (:math:`t = 0, 1, 2`).
-        - Bottom-left: Target goal frame (:math:`s_{H+K-1}`).
+        - Bottom-left: Target goal frame (:math:`s_{T}`).
         - Bottom-center: Latent rollout prediction MSE error trajectory curve.
         - Bottom-right: CEM planning cost convergence curve over iterations.
 
@@ -304,6 +306,7 @@ def save_diagnostic_plot(
         batch: Trajectory dictionary with "pixels" MLX array.
         history_size: Context history length (:math:`H`).
         horizon: Prediction forward horizon (:math:`K`).
+        goal_frame: Optional goal frame array to display at bottom-left.
         step_indices: Optional rollout sequence step indices.
         mse_errors: Optional step-by-step rollout MSE errors.
         shooting_cost: Optional baseline random shooting objective cost.
@@ -333,13 +336,21 @@ def save_diagnostic_plot(
             ax.set_title(f"Context Frame t={col}", fontsize=11)
         ax.axis("off")
 
-    # Bottom-left: Goal frame
-    goal_idx = history_size + horizon - 1
+    # Bottom-left: Goal frame at t = planning_horizon
+    planning_horizon = history_size + horizon
     ax_goal = axes[1, 0]
-    if goal_idx < pixels.shape[1]:
-        goal_frame = np.clip(pixels[0, goal_idx].transpose(1, 2, 0), 0.0, 1.0)
-        ax_goal.imshow(goal_frame)
-        ax_goal.set_title(f"Goal Frame (t={goal_idx})", fontsize=11, fontweight="bold")
+    if goal_frame is not None:
+        gf = np.clip(np.array(goal_frame).transpose(1, 2, 0), 0.0, 1.0)
+        ax_goal.imshow(gf)
+        ax_goal.set_title(
+            f"Goal Frame (t={planning_horizon})", fontsize=11, fontweight="bold"
+        )
+    elif planning_horizon < pixels.shape[1]:
+        gf = np.clip(pixels[0, planning_horizon].transpose(1, 2, 0), 0.0, 1.0)
+        ax_goal.imshow(gf)
+        ax_goal.set_title(
+            f"Goal Frame (t={planning_horizon})", fontsize=11, fontweight="bold"
+        )
     else:
         ax_goal.text(
             0.5, 0.5, "(Goal Out of Range)", ha="center", va="center", color="gray"
@@ -490,6 +501,16 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Input validation
+    if args.history_size <= 0:
+        raise ValueError(f"history_size must be positive, got {args.history_size}")
+    if args.horizon <= 0:
+        raise ValueError(f"horizon must be positive, got {args.horizon}")
+    if args.num_episodes <= 0:
+        raise ValueError(f"num_episodes must be positive, got {args.num_episodes}")
+    if args.frameskip <= 0:
+        raise ValueError(f"frameskip must be positive, got {args.frameskip}")
+
     # Build model components
     model = build_model(
         img_size=args.img_size,
@@ -507,12 +528,15 @@ def main() -> None:
         img_size=args.img_size,
     )
 
-    # Sample single test trajectory sequence
+    # Sample trajectory sequence with num_preds = horizon + 1 for exact temporal alignment
     batch = dataset.sample_batch(
         batch_size=1,
         history_size=args.history_size,
-        num_preds=args.horizon,
+        num_preds=args.horizon + 1,
     )
+
+    planning_horizon = args.history_size + args.horizon
+    goal_frame = batch["pixels"][0, planning_horizon]
 
     step_indices: Optional[List[int]] = None
     mse_errors: Optional[List[float]] = None
@@ -543,6 +567,7 @@ def main() -> None:
             batch=batch,
             history_size=args.history_size,
             horizon=args.horizon,
+            goal_frame=goal_frame,
             step_indices=step_indices,
             mse_errors=mse_errors,
             shooting_cost=shooting_cost,

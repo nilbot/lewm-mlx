@@ -135,3 +135,67 @@ def test_demo_cli_with_weights(tmp_path):
     )
     assert f"Loading model weights from '{weights_path}'" in res.stdout
     assert plot_path.exists()
+
+
+def test_demo_programmatic_api():
+    """Verifies direct in-process programmatic execution of demo components."""
+    import mlx.core as mx
+    from demo import build_model, run_planning, run_rollout
+
+    img_size = 96
+    embed_dim = 32
+    history_size = 2
+    horizon = 2
+    frameskip = 5
+    action_dim = frameskip * 2
+    planning_horizon = history_size + horizon
+
+    model = build_model(
+        img_size=img_size,
+        embed_dim=embed_dim,
+        history_size=history_size,
+        frameskip=frameskip,
+        weights_path=None,
+    )
+
+    # Batch with num_preds = horizon + 1 (total length planning_horizon + 1)
+    seq_len = planning_horizon + 1
+    batch = {
+        "pixels": mx.random.normal((1, seq_len, 3, img_size, img_size)),
+        "action": mx.random.normal((1, seq_len, action_dim)),
+    }
+
+    step_indices, mse_errors = run_rollout(
+        model=model,
+        batch=batch,
+        history_size=history_size,
+        horizon=horizon,
+    )
+    assert len(step_indices) == horizon
+    assert len(mse_errors) == horizon
+    assert all(isinstance(err, float) for err in mse_errors)
+
+    shooting_cost, cem_cost, cem_cost_history = run_planning(
+        model=model,
+        batch=batch,
+        history_size=history_size,
+        horizon=horizon,
+        action_dim=action_dim,
+    )
+    assert isinstance(shooting_cost, float)
+    assert isinstance(cem_cost, float)
+    assert len(cem_cost_history) == 5
+    assert cem_cost <= shooting_cost + 1e-5
+
+
+def test_demo_cli_validation():
+    """Verifies demo CLI rejects non-positive parameters."""
+    cmd = [
+        sys.executable,
+        "demo.py",
+        "--history-size",
+        "0",
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode != 0
+    assert "ValueError: history_size must be positive" in res.stderr

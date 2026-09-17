@@ -1,3 +1,4 @@
+from typing import Optional
 import mlx.core as mx
 import mlx.nn as nn
 from lewm_mlx.module import Identity
@@ -66,7 +67,7 @@ class JEPA(nn.Module):
         preds_proj = self.pred_proj(preds_flat)
         return preds_proj.reshape(B, T, -1)
 
-    def rollout(self, info, action_sequence, history_size: int = None):
+    def rollout(self, info, action_sequence, history_size: Optional[int] = None):
         """Rollout the model given an initial info dict and action sequence.
         pixels: (B, S, T, C, H, W) or (B, S, T, H, W, C)
         action_sequence: (B, S, T, action_dim)
