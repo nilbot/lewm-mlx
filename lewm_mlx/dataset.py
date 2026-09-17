@@ -53,7 +53,17 @@ class PushTMiniDataset:
             img_size: Target square image resolution (height and width).
             force_download: If True, re-downloads and re-processes from HF Hub.
             force_fallback: If True, skips HF download and uses synthetic data.
+
+        Raises:
+            ValueError: If num_episodes, frameskip, or img_size are not positive.
         """
+        if num_episodes <= 0:
+            raise ValueError(f"num_episodes must be positive, got {num_episodes}")
+        if frameskip <= 0:
+            raise ValueError(f"frameskip must be positive, got {frameskip}")
+        if img_size <= 0:
+            raise ValueError(f"img_size must be positive, got {img_size}")
+
         if cache_dir is None:
             cache_dir = os.path.expanduser("~/.cache/lewm")
         self.cache_dir = Path(cache_dir)
@@ -66,16 +76,33 @@ class PushTMiniDataset:
         # D_act = 2 * frameskip
         self.action_dim = frameskip * 2
 
-        self.cache_path = self.cache_dir / f"pusht_mini_{num_episodes}ep.npz"
+        self.cache_path = (
+            self.cache_dir / f"pusht_mini_{num_episodes}ep_f{frameskip}_{img_size}px.npz"
+        )
 
         self.episodes_pixels: List[np.ndarray] = []
         self.episodes_actions: List[np.ndarray] = []
 
         if force_fallback:
             self._load_fallback()
-        elif self.cache_path.exists() and not force_download:
-            self._load_from_cache()
-        else:
+            return
+
+        loaded = False
+        if self.cache_path.exists() and not force_download:
+            try:
+                self._load_from_cache()
+                loaded = True
+            except Exception as e:
+                print(
+                    f"Warning: Failed to load cache from {self.cache_path} ({e}). "
+                    "Removing corrupted cache and re-processing."
+                )
+                try:
+                    self.cache_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        if not loaded:
             try:
                 self._download_and_process()
             except Exception as e:
@@ -183,10 +210,10 @@ class PushTMiniDataset:
 
     def _load_from_cache(self) -> None:
         """Loads cached demonstration trajectories from local .npz archive."""
-        data = np.load(self.cache_path)
-        n = int(data["num_episodes"])
-        self.episodes_pixels = [data[f"pixels_{i}"] for i in range(n)]
-        self.episodes_actions = [data[f"actions_{i}"] for i in range(n)]
+        with np.load(self.cache_path) as data:
+            n = int(data["num_episodes"])
+            self.episodes_pixels = [data[f"pixels_{i}"] for i in range(n)]
+            self.episodes_actions = [data[f"actions_{i}"] for i in range(n)]
 
     def _load_fallback(self) -> None:
         """Generates synthetic 2D particle trajectories when offline.

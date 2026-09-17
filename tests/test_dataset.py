@@ -1,7 +1,9 @@
 """Unit tests for PushTMiniDataset."""
 
 from pathlib import Path
+from unittest.mock import patch
 import mlx.core as mx
+import pytest
 
 from lewm_mlx.dataset import PushTMiniDataset
 
@@ -73,6 +75,7 @@ def test_pusht_mini_dataset_download_and_caching(tmp_path: Path):
     assert len(dataset.episodes_pixels) == 2
     assert len(dataset.episodes_actions) == 2
     assert dataset.cache_path.exists()
+    assert dataset.cache_path.name == "pusht_mini_2ep_f5_96px.npz"
 
     # Verify reloading from the cached .npz archive without download
     cached_dataset = PushTMiniDataset(
@@ -95,3 +98,60 @@ def test_pusht_mini_dataset_download_and_caching(tmp_path: Path):
     assert mx.max(batch["action"]).item() <= 1.0
     assert not mx.any(mx.isnan(batch["pixels"])).item()
     assert not mx.any(mx.isnan(batch["action"])).item()
+
+
+def test_pusht_mini_dataset_network_failure_fallback(tmp_path: Path):
+    """Verifies graceful fallback to procedural synthetic data upon network failure."""
+    with patch(
+        "huggingface_hub.hf_hub_download",
+        side_effect=ConnectionError("Failed to reach HF Hub"),
+    ):
+        dataset = PushTMiniDataset(
+            cache_dir=str(tmp_path),
+            num_episodes=2,
+            frameskip=5,
+            img_size=96,
+            force_fallback=False,
+        )
+        assert dataset.num_episodes == 2
+        assert len(dataset.episodes_pixels) == 2
+        assert len(dataset.episodes_actions) == 2
+
+        batch = dataset.sample_batch(batch_size=2, history_size=2, num_preds=2)
+        assert "pixels" in batch
+        assert "action" in batch
+        assert batch["pixels"].shape == (2, 4, 3, 96, 96)
+        assert batch["action"].shape == (2, 4, 10)
+
+
+def test_pusht_mini_dataset_corrupted_cache_recovery(tmp_path: Path):
+    """Verifies that a corrupted or truncated cache file is detected and recovered from."""
+    corrupt_cache = tmp_path / "pusht_mini_2ep_f5_96px.npz"
+    corrupt_cache.write_bytes(b"corrupted zip bytes that will fail np.load")
+
+    with patch(
+        "huggingface_hub.hf_hub_download",
+        side_effect=ConnectionError("Offline fallback"),
+    ):
+        dataset = PushTMiniDataset(
+            cache_dir=str(tmp_path),
+            num_episodes=2,
+            frameskip=5,
+            img_size=96,
+        )
+        assert dataset.num_episodes == 2
+        assert len(dataset.episodes_pixels) == 2
+        # Corrupted cache file should have been removed
+        assert not corrupt_cache.exists()
+
+
+def test_pusht_mini_dataset_invalid_parameters(tmp_path: Path):
+    """Verifies ValueError raised for non-positive initialization arguments."""
+    with pytest.raises(ValueError, match="num_episodes must be positive"):
+        PushTMiniDataset(cache_dir=str(tmp_path), num_episodes=0)
+
+    with pytest.raises(ValueError, match="frameskip must be positive"):
+        PushTMiniDataset(cache_dir=str(tmp_path), frameskip=-1)
+
+    with pytest.raises(ValueError, match="img_size must be positive"):
+        PushTMiniDataset(cache_dir=str(tmp_path), img_size=0)
