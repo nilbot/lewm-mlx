@@ -266,3 +266,40 @@ def test_planner_missing_info_dict_keys():
 
     with pytest.raises(KeyError, match="goal"):
         planner.plan({"pixels": mx.zeros((1, 1, 3, 3, 96, 96))})
+
+
+def test_planner_horizon_must_exceed_context():
+    """Verifies that planning_horizon <= context history length raises ValueError."""
+    model = _build_dummy_jepa()
+    # Context length H = 4
+    init_pixels = mx.random.normal((1, 1, 4, 3, 96, 96))
+    goal_pixels = mx.random.normal((1, 1, 1, 3, 96, 96))
+    info_dict = {"pixels": init_pixels, "goal": goal_pixels}
+
+    # planning_horizon == context_h (4 <= 4)
+    planner_equal = CEMPlanner(model=model, planning_horizon=4, action_dim=10)
+    with pytest.raises(
+        ValueError, match="planning_horizon.*must be greater than context history length"
+    ):
+        planner_equal.plan(info_dict)
+
+    # planning_horizon < context_h (3 < 4)
+    planner_less = CEMPlanner(model=model, planning_horizon=3, action_dim=10)
+    with pytest.raises(
+        ValueError, match="planning_horizon.*must be greater than context history length"
+    ):
+        planner_less.plan(info_dict)
+
+
+def test_planner_batch_size_must_be_one():
+    """Verifies that batch size != 1 raises ValueError."""
+    model = _build_dummy_jepa()
+    planner = CEMPlanner(model=model, planning_horizon=5, action_dim=10)
+
+    # Batch size B = 2
+    init_pixels = mx.random.normal((2, 1, 3, 3, 96, 96))
+    goal_pixels = mx.random.normal((2, 1, 1, 3, 96, 96))
+    info_dict = {"pixels": init_pixels, "goal": goal_pixels}
+
+    with pytest.raises(ValueError, match="batch_size.*must be 1 for single-trajectory planning"):
+        planner.plan(info_dict)

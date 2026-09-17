@@ -115,11 +115,25 @@ class CEMPlanner:
 
         Raises:
             KeyError: If "pixels" or "goal" is not present in `info_dict`.
+            ValueError: If batch size != 1 or planning_horizon <= context history length.
         """
         if "pixels" not in info_dict:
             raise KeyError("info_dict must contain 'pixels' key for context observations")
         if "goal" not in info_dict:
             raise KeyError("info_dict must contain 'goal' key for target observation")
+
+        batch_size = info_dict["pixels"].shape[0]
+        if batch_size != 1:
+            raise ValueError(
+                f"batch_size ({batch_size}) must be 1 for single-trajectory planning"
+            )
+
+        context_h = info_dict["pixels"].shape[2]
+        if self.planning_horizon <= context_h:
+            raise ValueError(
+                f"planning_horizon ({self.planning_horizon}) must be greater than "
+                f"context history length ({context_h}) for forward rollout"
+            )
 
         t_horizon = self.planning_horizon
         act_dim = self.action_dim
@@ -162,6 +176,7 @@ class CEMPlanner:
 
             mu = self.alpha * mu + (1.0 - self.alpha) * elite_mean
             sigma = self.alpha * sigma + (1.0 - self.alpha) * elite_std
+            mx.eval(mu, sigma)
 
         return best_plan, best_cost, cost_history
 
