@@ -14,7 +14,8 @@ from typing import Any, Dict, Tuple
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as opt
-from mlx.utils import tree_flatten
+import numpy as np
+from mlx.utils import tree_flatten, tree_map
 
 from lewm_mlx.dataset import PushTMiniDataset
 from lewm_mlx.jepa import JEPA
@@ -38,6 +39,26 @@ def compute_tree_norm(tree: Any) -> mx.array:
     if not flat:
         return mx.array(0.0)
     return mx.sqrt(sum(mx.sum(mx.square(p)) for _, p in flat))
+
+
+def clip_gradients(grads: Any, max_norm: float) -> Any:
+    r"""Rescales a gradient tree to bound its global :math:`L_2` norm.
+
+    $$\mathbf{g} \leftarrow \mathbf{g} \cdot
+    \min\left(1, \frac{\text{max\_norm}}{\|\mathbf{g}\|_2 + \epsilon}\right)$$
+
+    Args:
+        grads: Nested gradient tree produced by ``mlx.nn.value_and_grad``.
+        max_norm: Maximum permitted global gradient norm; non-positive disables clipping.
+
+    Returns:
+        The original tree when clipping is disabled, otherwise the rescaled tree.
+    """
+    if max_norm <= 0:
+        return grads
+    norm = compute_tree_norm(grads)
+    scale = mx.minimum(1.0, max_norm / (norm + 1e-6))
+    return tree_map(lambda g: g * scale, grads)
 
 
 def generate_synthetic_batch(
@@ -155,7 +176,67 @@ def main() -> None:
         action="store_true",
         help="Disable ImageNet pixel normalization (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])",
     )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Random seed for MLX and NumPy (0 disables seeding)"
+    )
+    parser.add_argument("--patch-size", type=int, default=16, help="ViT patch size")
+    parser.add_argument(
+        "--encoder-layers", type=int, default=2, help="ViT hidden layers"
+    )
+    parser.add_argument(
+        "--encoder-heads", type=int, default=2, help="ViT attention heads"
+    )
+    parser.add_argument(
+        "--encoder-mlp-dim", type=int, default=256, help="ViT intermediate (MLP) size"
+    )
+    parser.add_argument(
+        "--predictor-depth", type=int, default=2, help="ARPredictor transformer depth"
+    )
+    parser.add_argument(
+        "--predictor-heads", type=int, default=2, help="ARPredictor attention heads"
+    )
+    parser.add_argument(
+        "--predictor-mlp-dim", type=int, default=256, help="ARPredictor MLP hidden size"
+    )
+    parser.add_argument(
+        "--predictor-dim-head", type=int, default=64, help="ARPredictor per-head dimension"
+    )
+    parser.add_argument(
+        "--predictor-dropout", type=float, default=0.0, help="ARPredictor dropout rate"
+    )
+    parser.add_argument(
+        "--proj-hidden", type=int, default=256, help="Projection-head MLP hidden size"
+    )
+    parser.add_argument(
+        "--sigreg-num-proj", type=int, default=256, help="SIGReg random projections per step"
+    )
+    parser.add_argument(
+        "--grad-clip", type=float, default=0.0, help="Global gradient-norm clip (0 disables)"
+    )
+    parser.add_argument(
+        "--lr-schedule",
+        type=str,
+        choices=["constant", "cosine"],
+        default="constant",
+        help="Learning-rate schedule (cosine uses --warmup-epochs then cosine decay)",
+    )
+    parser.add_argument(
+        "--warmup-epochs", type=int, default=0, help="Linear warmup epochs (cosine schedule only)"
+    )
+    parser.add_argument(
+        "--save-every", type=int, default=0, help="Write a checkpoint every N epochs (0 disables)"
+    )
+    parser.add_argument(
+        "--val-fraction",
+        type=float,
+        default=0.0,
+        help="Fraction of episodes held out from training and used for the fixed probe (0 disables the split)",
+    )
     args = parser.parse_args()
+
+    if args.seed:
+        mx.random.seed(args.seed)
+        np.random.seed(args.seed)
 
     # Configure action dimension depending on dataset choice:
     # For pusht_mini, action_dim = frameskip * 2 (2D end-effector coordinates chunked over frameskip).
@@ -174,26 +255,39 @@ def main() -> None:
             img_size=args.img_size,
         )
 
+    # Episode-level holdout for the fixed evaluation probe
+    held_out = None
+    if dataset is not None and args.val_fraction > 0:
+        n_val = max(1, int(round(len(dataset.episodes_pixels) * args.val_fraction)))
+        held_out = (
+            dataset.episodes_pixels[:n_val],
+            dataset.episodes_actions[:n_val],
+        )
+        dataset.episodes_pixels = dataset.episodes_pixels[n_val:]
+        dataset.episodes_actions = dataset.episodes_actions[n_val:]
+
     # Define model sub-components
     # ViT visual encoder for patch-based representation
     encoder = ViTModel(
         image_size=args.img_size,
-        patch_size=16,
+        patch_size=args.patch_size,
         num_channels=3,
         hidden_size=args.embed_dim,
-        num_hidden_layers=2,
-        num_attention_heads=2,
-        intermediate_size=256,
+        num_hidden_layers=args.encoder_layers,
+        num_attention_heads=args.encoder_heads,
+        intermediate_size=args.encoder_mlp_dim,
     )
 
     # Autoregressive transformer predictor in latent space
     predictor = ARPredictor(
         num_frames=args.history_size,
-        depth=2,
-        heads=2,
-        mlp_dim=256,
+        depth=args.predictor_depth,
+        heads=args.predictor_heads,
+        mlp_dim=args.predictor_mlp_dim,
         input_dim=args.embed_dim,
         hidden_dim=args.embed_dim,
+        dim_head=args.predictor_dim_head,
+        dropout=args.predictor_dropout,
     )
 
     # Action encoder projecting continuous control chunks to latent embedding space
@@ -213,14 +307,14 @@ def main() -> None:
     # Projection heads
     projector = MLP(
         input_dim=args.embed_dim,
-        hidden_dim=256,
+        hidden_dim=args.proj_hidden,
         output_dim=args.embed_dim,
         norm_fn=norm_cls,
     )
 
     pred_proj = MLP(
         input_dim=args.embed_dim,
-        hidden_dim=256,
+        hidden_dim=args.proj_hidden,
         output_dim=args.embed_dim,
         norm_fn=norm_cls,
     )
@@ -236,10 +330,26 @@ def main() -> None:
     model.train()
 
     # Self-Information-Gauged Regularization (SIGReg)
-    sigreg = SIGReg(knots=17, num_proj=256)
+    sigreg = SIGReg(knots=17, num_proj=args.sigreg_num_proj)
 
-    # Optimizer
-    optimizer = opt.AdamW(learning_rate=args.lr, weight_decay=args.weight_decay)
+    # Optimizer with optional linear warmup followed by cosine decay
+    if args.lr_schedule == "cosine":
+        total_steps = max(1, args.epochs * args.steps_per_epoch)
+        warmup_steps = min(
+            max(0, args.warmup_epochs) * args.steps_per_epoch, total_steps
+        )
+        schedules = []
+        boundaries = []
+        if warmup_steps > 0:
+            schedules.append(opt.linear_schedule(0.0, args.lr, warmup_steps))
+            boundaries.append(warmup_steps)
+        schedules.append(opt.cosine_decay(args.lr, max(1, total_steps - warmup_steps)))
+        learning_rate = (
+            schedules[0] if len(schedules) == 1 else opt.join_schedules(schedules, boundaries)
+        )
+    else:
+        learning_rate = args.lr
+    optimizer = opt.AdamW(learning_rate=learning_rate, weight_decay=args.weight_decay)
 
     # Sequence length: T = H + K (history_size + num_preds)
     seq_len = args.history_size + args.num_preds
@@ -340,6 +450,7 @@ def main() -> None:
             Dictionary containing loss components, representation metrics, and gradient norms.
         """
         (loss, metrics), grads = loss_and_grads(model, batch)
+        grads = clip_gradients(grads, args.grad_clip)
         optimizer.update(model, grads)
 
         # Diagnostic gradient and parameter dynamics
@@ -359,9 +470,20 @@ def main() -> None:
     eval_batch = None
     if args.eval_fixed:
         if dataset is not None:
-            eval_batch = dataset.sample_batch(
-                args.batch_size, args.history_size, args.num_preds
-            )
+            if held_out is not None:
+                train_episodes = (
+                    dataset.episodes_pixels,
+                    dataset.episodes_actions,
+                )
+                dataset.episodes_pixels, dataset.episodes_actions = held_out
+                eval_batch = dataset.sample_batch(
+                    args.batch_size, args.history_size, args.num_preds
+                )
+                dataset.episodes_pixels, dataset.episodes_actions = train_episodes
+            else:
+                eval_batch = dataset.sample_batch(
+                    args.batch_size, args.history_size, args.num_preds
+                )
         else:
             eval_batch = generate_synthetic_batch(
                 args.batch_size, seq_len, args.img_size, action_dim
@@ -376,8 +498,19 @@ def main() -> None:
 
     print("Starting MLX Le World Model Training Loop...")
     print(f"Dataset: {args.dataset}")
+    if dataset is not None:
+        n_hold = 0 if held_out is None else len(held_out[0])
+        print(
+            f"Episodes: {len(dataset.episodes_pixels)} train | {n_hold} held out"
+        )
     print(f"Epochs: {args.epochs}, Steps per epoch: {args.steps_per_epoch}")
     print(f"Batch size: {args.batch_size}, Image size: {args.img_size}")
+    num_params = sum(int(np.prod(p.shape)) for _, p in tree_flatten(model.parameters()))
+    print(
+        f"Model: {num_params / 1e6:.2f}M parameters | "
+        f"ViT {args.encoder_layers}L/{args.encoder_heads}H/{args.encoder_mlp_dim} "
+        f"patch {args.patch_size} | dim {args.embed_dim}"
+    )
     if args.metrics_path:
         print(f"Metrics log: {args.metrics_path}")
     if args.eval_fixed:
@@ -458,11 +591,21 @@ def main() -> None:
         log_parts.append(f"Time: {elapsed:.2f}s")
         print(" | ".join(log_parts))
 
+        # Periodic checkpoints so a long run can be evaluated at intermediate budgets
+        if args.save_every and (epoch + 1) % args.save_every == 0:
+            save_p = Path(args.save_path)
+            ckpt_path = save_p.with_name(
+                f"{save_p.stem}.epoch{epoch + 1:03d}{save_p.suffix}"
+            )
+            model.save_weights(str(ckpt_path))
+            print(f"Saved checkpoint to {ckpt_path}")
+
         # Output to structured JSON Lines log if path specified
         if args.metrics_path:
             record = {
                 "epoch": epoch + 1,
                 "elapsed": elapsed,
+                "lr": float(optimizer.learning_rate.item()),
                 **avg_metrics,
                 **val_telemetry,
             }

@@ -13,6 +13,22 @@ import mlx.core as mx
 import numpy as np
 
 
+def _as_uint8_frames(frames: np.ndarray) -> np.ndarray:
+    """Converts cached ``[0, 1]`` float frames to uint8 storage.
+
+    Args:
+        frames: Frame array of shape :math:`[T, 3, H, W]` in either uint8 or
+            float32 :math:`[0, 1]` representation.
+
+    Returns:
+        uint8 frame array; float inputs are scaled by 255 and rounded, which is
+        exact for frames originally derived from 8-bit images.
+    """
+    if frames.dtype == np.uint8:
+        return frames
+    return np.clip(frames * 255.0, 0.0, 255.0).round().astype(np.uint8)
+
+
 class PushTMiniDataset:
     """Dataset loader for Push-T demonstration trajectories.
 
@@ -164,9 +180,8 @@ class PushTMiniDataset:
                     (self.img_size, self.img_size),
                     interpolation=cv2.INTER_LINEAR,
                 )
-            # Layout [3, H, W] normalized to [0.0, 1.0]
-            # frame_chw in [0.0, 1.0]^{3 x H x W}
-            frame_chw = (frame_rgb.transpose(2, 0, 1) / 255.0).astype(np.float32)
+            # Layout [3, H, W] stored as uint8; sample_batch restores [0.0, 1.0]
+            frame_chw = np.ascontiguousarray(frame_rgb.transpose(2, 0, 1))
             frames.append(frame_chw)
             frame_idx += 1
         cap.release()
@@ -212,7 +227,9 @@ class PushTMiniDataset:
         """Loads cached demonstration trajectories from local .npz archive."""
         with np.load(self.cache_path) as data:
             n = int(data["num_episodes"])
-            self.episodes_pixels = [data[f"pixels_{i}"] for i in range(n)]
+            self.episodes_pixels = [
+                _as_uint8_frames(data[f"pixels_{i}"]) for i in range(n)
+            ]
             self.episodes_actions = [data[f"actions_{i}"] for i in range(n)]
 
     def _load_fallback(self) -> None:
@@ -226,10 +243,13 @@ class PushTMiniDataset:
         self.episodes_actions = []
         t_steps = 40
         for _ in range(self.num_episodes):
-            # Synthetic visual frames: [T, 3, H, W] in [0.1, 0.9]
-            p = np.random.uniform(
-                0.1, 0.9, size=(t_steps, 3, self.img_size, self.img_size)
-            ).astype(np.float32)
+            # Synthetic visual frames: [T, 3, H, W] stored as uint8 within ~[0.1, 0.9]
+            p = (
+                np.random.uniform(
+                    0.1, 0.9, size=(t_steps, 3, self.img_size, self.img_size)
+                )
+                * 255.0
+            ).round().astype(np.uint8)
             # Synthetic actions: [T, D_act] in [-1.0, 1.0]
             a = np.random.uniform(-1.0, 1.0, size=(t_steps, self.action_dim)).astype(
                 np.float32
@@ -292,6 +312,10 @@ class PushTMiniDataset:
         # action: [B, T, D_act]
         pixels_batch = np.stack(batch_pixels, axis=0)  # [B, T, 3, H, W]
         actions_batch = np.stack(batch_actions, axis=0)  # [B, T, D_act]
+        if pixels_batch.dtype == np.uint8:
+            pixels_batch = pixels_batch.astype(np.float32) / 255.0
+        else:
+            pixels_batch = pixels_batch.astype(np.float32)
 
         return {
             "pixels": mx.array(pixels_batch),

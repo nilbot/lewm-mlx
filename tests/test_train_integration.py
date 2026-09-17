@@ -98,3 +98,64 @@ def test_train_telemetry_options(tmp_path):
         assert "grad_norm" in record
         assert "enc_grad_norm" in record
         assert "val_pred_loss" in record
+
+
+def test_train_paper_schedule_options(tmp_path):
+    """Verifies gradient clipping, cosine schedule, holdout split, and periodic checkpoints.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    import json
+
+    save_path = tmp_path / "scheduled_model.npz"
+    metrics_path = tmp_path / "scheduled_metrics.jsonl"
+    cmd = [
+        sys.executable,
+        "-m",
+        "lewm_mlx.train",
+        "--dataset",
+        "pusht_mini",
+        "--cache-dir",
+        str(tmp_path / "cache"),
+        "--num-episodes",
+        "2",
+        "--val-fraction",
+        "0.5",
+        "--epochs",
+        "2",
+        "--steps-per-epoch",
+        "2",
+        "--img-size",
+        "96",
+        "--batch-size",
+        "2",
+        "--grad-clip",
+        "1.0",
+        "--lr-schedule",
+        "cosine",
+        "--warmup-epochs",
+        "1",
+        "--save-every",
+        "1",
+        "--seed",
+        "7",
+        "--metrics-path",
+        str(metrics_path),
+        "--save-path",
+        str(save_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode == 0, (
+        f"Training with schedule options failed with stderr:\n{res.stderr}\nstdout:\n{res.stdout}"
+    )
+    assert "Saved checkpoint to" in res.stdout
+    assert "held out" in res.stdout
+    assert (tmp_path / "scheduled_model.epoch001.npz").exists()
+    assert (tmp_path / "scheduled_model.epoch002.npz").exists()
+
+    with open(metrics_path, "r", encoding="utf-8") as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    assert len(lines) == 2
+    assert lines[0]["lr"] > 0.0
+    assert lines[1]["lr"] >= lines[0]["lr"]  # warmup region
