@@ -103,6 +103,7 @@ PYTHONPATH=. uv run python demo.py \
 | `--num-episodes` | `int` | `10` | Number of demonstration episodes to load. |
 | `--frameskip` | `int` | `5` | Action frameskip factor ($D_{act} = 2 \times \text{frameskip}$). |
 | `--img-size` | `int` | `96` | Frame resolution (e.g. 96 or 224). |
+| `--embed-dim` | `int` | `64` | Latent embedding dimension. |
 | `--history-size` | `int` | `3` | Context observation history length ($H$). |
 | `--horizon` | `int` | `5` | Forward prediction / planning horizon ($K$). |
 | `--save-plot` | `str` | `pusht_demo.png` | Destination path for diagnostic plot. |
