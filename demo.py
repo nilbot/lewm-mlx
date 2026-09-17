@@ -10,9 +10,9 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib
+# Set non-interactive headless backend prior to pyplot import
+os.environ.setdefault("MPLBACKEND", "Agg")
 
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mlx.core as mx
 import mlx.nn as nn

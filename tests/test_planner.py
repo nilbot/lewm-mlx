@@ -291,15 +291,22 @@ def test_planner_horizon_must_exceed_context():
         planner_less.plan(info_dict)
 
 
-def test_planner_batch_size_must_be_one():
-    """Verifies that batch size != 1 raises ValueError."""
+def test_planner_batch_parallel_execution():
+    """Verifies that batch size B > 1 plans trajectories across batch items in parallel."""
     model = _build_dummy_jepa()
-    planner = CEMPlanner(model=model, planning_horizon=5, action_dim=10)
+    planner = CEMPlanner(
+        model=model, planning_horizon=5, action_dim=10, num_samples=16, num_elites=4, iterations=2
+    )
 
     # Batch size B = 2
     init_pixels = mx.random.normal((2, 1, 3, 3, 96, 96))
     goal_pixels = mx.random.normal((2, 1, 1, 3, 96, 96))
     info_dict = {"pixels": init_pixels, "goal": goal_pixels}
 
-    with pytest.raises(ValueError, match="batch_size.*must be 1 for single-trajectory planning"):
-        planner.plan(info_dict)
+    best_plan, best_cost, cost_history = planner.plan(info_dict)
+    # Assert batched plan shape [B, T, D] = [2, 5, 10]
+    assert best_plan.shape == (2, 5, 10)
+    assert isinstance(best_cost, list)
+    assert len(best_cost) == 2
+    assert all(isinstance(c, float) for c in best_cost)
+    assert len(cost_history) == 2

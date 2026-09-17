@@ -1,4 +1,3 @@
-import math
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -261,7 +260,7 @@ class MLP(nn.Module):
             else:
                 try:
                     norm_layer = norm_fn(hidden_dim)
-                except:
+                except Exception:
                     norm_layer = Identity()
 
         self.net = nn.Sequential(

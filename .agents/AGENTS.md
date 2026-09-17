@@ -50,7 +50,23 @@ Whenever the user says *"wow good to know, can you save it to QnA?"* (or similar
 
 ---
 
-## 🔒 3. Safe Execution Constraints
+## 🔒 3. Safe Execution Constraints & Environment Setup
 
 * **Automatic Approvals**: Proposals containing `[WIP]` or `WIP` tags in their titles must never be executed automatically. The agent must wait for human feedback.
 * **Timer Safety**: Never use shell-based `sleep` tasks for background polling; use the system `schedule` timer tool to manage sleep cycles asynchronously.
+* **macOS Developer Directory**: If git commands fail or hang requesting Xcode license agreement in non-interactive shells, invoke git with `DEVELOPER_DIR=/Library/Developer/CommandLineTools git <args>` to target CommandLineTools directly.
+* **Python Environment**: Use `uv run` for executing python scripts and tests. With an editable install (`uv pip install -e .`), `PYTHONPATH=.` is not required in the project root workspace.
+
+---
+
+## 🔌 4. Superpowers Skills Adaptation Policy
+
+The Superpowers plugin expects design specs and plans at `docs/superpowers/specs/` and `docs/superpowers/plans/`, whereas the repository's canonical context structure mandates designs in `docs/design/` and plans in `docs/plans/`.
+
+To maintain a single source of truth without duplicating documents:
+1. **Canonical Store**: All design specifications live in `docs/design/` and all implementation plans live in `docs/plans/`.
+2. **Git Ignored**: `docs/superpowers/` is git-ignored and must never be tracked in the git index.
+3. **Relative Symlinks**: When using Superpowers skills (`brainstorming`, `writing-plans`, `subagent-driven-development`), agents must create and maintain relative symlinks from `docs/superpowers/` to `docs/{design,plans}`:
+   - `docs/superpowers/specs/<YYYY-MM-DD-topic-design>.md` $\to$ `../../design/<topic>.md`
+   - `docs/superpowers/plans/<YYYY-MM-DD-topic>.md` $\to$ `../../plans/<YYYY-MM-DD-topic>.md`
+   Agents must ensure the symlink target names satisfy Superpowers naming conventions (e.g., prefixed with `YYYY-MM-DD`).

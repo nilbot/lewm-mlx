@@ -74,6 +74,8 @@ class JEPA(nn.Module):
          - S is the number of action plan samples
          - T is the time horizon
         """
+        # Non-destructive dictionary copy to avoid mutating caller's references
+        info = dict(info)
         assert "pixels" in info, "pixels not in info_dict"
 
         pixels = info["pixels"]
@@ -162,6 +164,7 @@ class JEPA(nn.Module):
 
     def get_cost(self, info_dict: dict, action_candidates: mx.array):
         """Compute the cost of action candidates given an info dict with goal and initial state."""
+        info_dict = dict(info_dict)
         assert "goal" in info_dict, "goal not in info_dict"
 
         # Convert everything in info_dict to mx.array if possible

@@ -48,7 +48,7 @@ It downloads and processes demonstration trajectories directly from the Hugging 
 Train the world model directly on Push-T demonstration episodes using the integrated training script:
 
 ```bash
-PYTHONPATH=. uv run python lewm_mlx/train.py \
+uv run python lewm_mlx/train.py \
     --dataset pusht_mini \
     --num-episodes 5 \
     --epochs 2 \
@@ -60,7 +60,7 @@ PYTHONPATH=. uv run python lewm_mlx/train.py \
 To train on synthetic kinematics batches instead:
 
 ```bash
-PYTHONPATH=. uv run python lewm_mlx/train.py \
+uv run python lewm_mlx/train.py \
     --dataset synthetic \
     --epochs 2 \
     --steps-per-epoch 5
@@ -75,7 +75,7 @@ The repository includes a unified evaluation CLI [`demo.py`](demo.py) supporting
 ### Running Both Modes (Recommended)
 
 ```bash
-PYTHONPATH=. uv run python demo.py \
+uv run python demo.py \
     --weights lewm_weights.npz \
     --mode both \
     --num-episodes 5 \
@@ -87,11 +87,11 @@ PYTHONPATH=. uv run python demo.py \
 
 - **Latent Rollout Only**:
   ```bash
-  PYTHONPATH=. uv run python demo.py --mode rollout --num-episodes 5 --img-size 96 --save-plot rollout.png
+  uv run python demo.py --mode rollout --num-episodes 5 --img-size 96 --save-plot rollout.png
   ```
 - **Goal-Directed Planning Only**:
   ```bash
-  PYTHONPATH=. uv run python demo.py --mode plan --num-episodes 5 --img-size 96 --save-plot plan.png
+  uv run python demo.py --mode plan --num-episodes 5 --img-size 96 --save-plot plan.png
   ```
 
 ### CLI Arguments
@@ -116,7 +116,7 @@ PYTHONPATH=. uv run python demo.py \
 Run the complete test suite across architectural equivalence, dataset caching, planners, and integration tests:
 
 ```bash
-PYTHONPATH=. uv run pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 All 28 tests across the repository verify numerical correctness, gradient propagation, and interface parity against the PyTorch reference implementation.

@@ -1,9 +1,7 @@
 import sys
 import os
-import math
 from pathlib import Path
 import numpy as np
-import pytest
 
 # Add reference repo to python path
 ref_path = str(Path(__file__).parent.parent / "le-wm-ref")
@@ -12,7 +10,6 @@ if ref_path not in sys.path:
 
 import torch
 import mlx.core as mx
-import mlx.nn as nn
 
 # Import PyTorch classes
 import module as pt_module

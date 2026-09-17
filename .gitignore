@@ -10,3 +10,5 @@ wandb/
 *.ckpt
 *.pt
 *.npz
+docs/superpowers/
+pusht_demo.png
