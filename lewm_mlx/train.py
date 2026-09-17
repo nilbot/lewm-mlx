@@ -71,6 +71,12 @@ def main() -> None:
         default=5,
         help="Action chunking and frameskip factor",
     )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Local directory for dataset cache archive",
+    )
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     parser.add_argument("--img-size", type=int, default=96, help="Input image size")
     parser.add_argument("--embed-dim", type=int, default=64, help="Embedding dimension")
@@ -107,6 +113,7 @@ def main() -> None:
     dataset = None
     if args.dataset == "pusht_mini":
         dataset = PushTMiniDataset(
+            cache_dir=args.cache_dir,
             num_episodes=args.num_episodes,
             frameskip=args.frameskip,
             img_size=args.img_size,
@@ -230,7 +237,19 @@ def main() -> None:
     loss_and_grads = nn.value_and_grad(model, loss_fn)
 
     @mx.compile
-    def train_step(batch: Dict[str, mx.array]):
+    def train_step(
+        batch: Dict[str, mx.array],
+    ) -> Tuple[Tuple[mx.array, Tuple[mx.array, mx.array]], dict]:
+        """Executes a single compiled forward and backward training step.
+
+        Args:
+            batch: Dictionary mapping feature keys ("pixels", "action") to MLX arrays.
+
+        Returns:
+            Tuple of:
+                - (total_loss, (pred_loss, sigreg_loss)): Scalar loss metrics.
+                - grads: Dictionary tree of model parameter gradients.
+        """
         return loss_and_grads(model, batch)
 
     print("Starting MLX Le World Model Training Loop...")
