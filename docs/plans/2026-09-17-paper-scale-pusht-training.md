@@ -11,8 +11,10 @@ ImageNet normalization, the two-term objective (next-embedding MSE plus
 ## Hardware envelope
 
 Apple M1 (8 cores), 16 GB unified memory, MLX 0.31.2. Measured throughput at
-224px with the full recipe: **batch 32 = 1.7-1.8 s/step**; batch 64 falls off a
-memory cliff (48 s/step), so batch 32 is the practical ceiling here.
+224px with the full recipe: **batch 32 = 1.75 s/step** is the largest fast
+size; batch 34 already falls to 34 s/step and 36-64 sit in a 30-75 s/step
+paging regime, so batch 32 is the machine's actual ceiling
+([measured ladder](../journal/2026-09-17-paper-scale-pusht-run.md)).
 
 ## Recipe
 
@@ -28,7 +30,7 @@ memory cliff (48 s/step), so batch 32 is the practical ceiling here.
 | Epochs | 100 | 100 | ~397k samples vs ~443k |
 | Data | pusht_expert_train, 206 episodes, 90/10 split | same (185 train / 21 held out) | |
 | Precision | bf16 | fp32 | M1 |
-| Wall clock | "a few hours" on one GPU | approximately 6.3 h measured | 1.84 s/step |
+| Wall clock | "a few hours" on one GPU | 7.79 h summed, ~7.9 h wall clock | median 232 s/epoch |
 
 ## Launch command
 
@@ -70,4 +72,11 @@ Artifacts land under `outputs/paper-pusht-20260917/`: `train.log`,
   but the per-step gradient noise and the batch statistics seen by BatchNorm and
   SIGReg differ.
 - fp32 instead of bf16, and M1 throughput instead of a datacenter GPU, stretch
-  the wall clock from "a few hours" to approximately 6.3 hours.
+  the wall clock from "a few hours" to approximately 7.8 hours.
+
+## Outcome (2026-09-17)
+
+Run completed all 100 epochs; final epoch Loss 0.0473, CosSim +0.996,
+ValPred 0.0242, ValCos +0.976, no collapse signature. See
+[2026-09-17-paper-scale-pusht-run.md](../journal/2026-09-17-paper-scale-pusht-run.md)
+for the full record and the batch-cliff ladder.
