@@ -7,6 +7,7 @@ environment, producing tabular error metrics and visual multi-panel diagnostic p
 
 import argparse
 import os
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
@@ -30,6 +31,7 @@ def build_model(
     history_size: int,
     frameskip: int,
     weights_path: Optional[str] = None,
+    explicit_weights: bool = False,
 ) -> JEPA:
     r"""Builds and initializes the Joint-Embedding Predictive Architecture (JEPA).
 
@@ -48,6 +50,7 @@ def build_model(
         history_size: Temporal length of observation context window (:math:`H`).
         frameskip: Action chunking and downsampling factor (:math:`F`).
         weights_path: Optional path to serialized model weights archive (.npz).
+        explicit_weights: Whether the weights path was explicitly supplied by user.
 
     Returns:
         Configured JEPA model set to evaluation mode.
@@ -105,9 +108,30 @@ def build_model(
     )
     model.eval()
 
+    is_user_specified = explicit_weights or (
+        weights_path is not None and weights_path != "lewm_weights.npz"
+    )
+
     if weights_path and os.path.exists(weights_path):
         print(f"Loading model weights from '{weights_path}'...")
-        model.load_weights(weights_path)
+        try:
+            model.load_weights(weights_path)
+        except Exception as exc:
+            # Shape mismatches commonly occur when pre-trained position embeddings
+            # (e.g. 197 tokens from 224x224 resolution: (224/16)^2 + 1 = 197) do not
+            # match the current spatial token count (e.g. 37 tokens from 96x96: (96/16)^2 + 1 = 37).
+            if is_user_specified:
+                raise RuntimeError(
+                    f"Failed to load user-specified weights from {weights_path}: {exc}"
+                ) from exc
+            print(
+                f"Warning: Failed to load default weights from '{weights_path}': {exc}. "
+                "Continuing with initialized model for zero-setup demo."
+            )
+    elif is_user_specified and weights_path:
+        raise FileNotFoundError(
+            f"User-specified weights file '{weights_path}' not found."
+        )
     else:
         print(
             f"Notice: Weights file '{weights_path}' not found. "
@@ -512,12 +536,14 @@ def main() -> None:
         raise ValueError(f"frameskip must be positive, got {args.frameskip}")
 
     # Build model components
+    explicit_weights = "--weights" in sys.argv
     model = build_model(
         img_size=args.img_size,
         embed_dim=args.embed_dim,
         history_size=args.history_size,
         frameskip=args.frameskip,
         weights_path=args.weights,
+        explicit_weights=explicit_weights,
     )
 
     # Load demonstration dataset
