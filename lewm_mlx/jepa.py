@@ -140,10 +140,13 @@ class JEPA(nn.Module):
     def criterion(self, info_dict: dict):
         """Compute the cost between predicted embeddings and goal embeddings."""
         pred_emb = info_dict["predicted_emb"]  # (B, S, T_pred, dim)
-        goal_emb = info_dict["goal_emb"]  # (B, S, T_goal, dim)
+        goal_emb = info_dict["goal_emb"]  # (B, S, T_goal, dim) or (B, T_goal, dim)
+
+        if goal_emb.ndim == 3:
+            goal_emb = mx.expand_dims(goal_emb, 1)  # (B, 1, T_goal, dim)
 
         # Compute MSE loss on the last step: sum of squared differences
-        last_goal = goal_emb[:, :, -1:, :]  # (B, S, 1, dim)
+        last_goal = goal_emb[:, :, -1:, :]  # (B, 1 or S, 1, dim)
         last_pred = pred_emb[:, :, -1:, :]  # (B, S, 1, dim)
 
         diff_sq = mx.square(last_pred - last_goal)
