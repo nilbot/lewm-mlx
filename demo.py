@@ -107,7 +107,13 @@ def build_model(
 
     if weights_path and os.path.exists(weights_path):
         print(f"Loading model weights from '{weights_path}'...")
-        model.load_weights(weights_path)
+        try:
+            model.load_weights(weights_path)
+        except Exception as exc:
+            print(
+                f"Warning: Failed to load weights from '{weights_path}': {exc}. "
+                "Continuing with initialized model."
+            )
     else:
         print(
             f"Notice: Weights file '{weights_path}' not found. "
