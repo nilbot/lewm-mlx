@@ -1,6 +1,8 @@
+from typing import Optional
 import mlx.core as mx
 import mlx.nn as nn
 from lewm_mlx.module import Identity
+
 
 class JEPA(nn.Module):
     """Joint-Embedding Predictive Architecture (JEPA) in MLX."""
@@ -24,17 +26,17 @@ class JEPA(nn.Module):
         """Encode observations and actions into embeddings.
         info: dict with pixels and action keys
         """
-        pixels = info['pixels']
+        pixels = info["pixels"]
         if not isinstance(pixels, mx.array):
             pixels = mx.array(pixels)
         pixels = pixels.astype(mx.float32)
-        
+
         B = pixels.shape[0]
         T = pixels.shape[1]
-        
+
         if pixels.ndim == 5:
             # Handle NCHW -> NHWC transposition
-            if pixels.shape[2] == 3: # C is index 2
+            if pixels.shape[2] == 3:  # C is index 2
                 pixels = pixels.transpose(0, 1, 3, 4, 2)
             pixels_flat = pixels.reshape(B * T, *pixels.shape[2:])
         else:
@@ -42,16 +44,16 @@ class JEPA(nn.Module):
 
         output = self.encoder(pixels_flat, interpolate_pos_encoding=True)
         pixels_emb = output.last_hidden_state[:, 0, :]
-        
+
         emb = self.projector(pixels_emb)
         info["emb"] = emb.reshape(B, T, -1)
-        
+
         if "action" in info:
             action = info["action"]
             if not isinstance(action, mx.array):
                 action = mx.array(action)
             info["act_emb"] = self.action_encoder(action)
-            
+
         return info
 
     def predict(self, emb, act_emb):
@@ -65,7 +67,7 @@ class JEPA(nn.Module):
         preds_proj = self.pred_proj(preds_flat)
         return preds_proj.reshape(B, T, -1)
 
-    def rollout(self, info, action_sequence, history_size: int = 3):
+    def rollout(self, info, action_sequence, history_size: Optional[int] = None):
         """Rollout the model given an initial info dict and action sequence.
         pixels: (B, S, T, C, H, W) or (B, S, T, H, W, C)
         action_sequence: (B, S, T, action_dim)
@@ -73,15 +75,17 @@ class JEPA(nn.Module):
          - T is the time horizon
         """
         assert "pixels" in info, "pixels not in info_dict"
-        
+
         pixels = info["pixels"]
         if not isinstance(pixels, mx.array):
             pixels = mx.array(pixels)
-            
+
         # Context size H is the size of pixels' 3rd dimension
         H = pixels.shape[2]
+        if history_size is None:
+            history_size = H
         B, S, T = action_sequence.shape[:3]
-        
+
         # Split action sequence: act_0 is history actions, act_future is future actions
         # act_0: (B, S, H, action_dim), act_future: (B, S, T - H, action_dim)
         act_0 = action_sequence[:, :, :H, :]
@@ -97,14 +101,16 @@ class JEPA(nn.Module):
                 try:
                     arr = mx.array(v)
                     _init[k] = arr[:, 0]
-                except:
+                except Exception:
                     pass
 
         _init = self.encode(_init)
-        
+
         # Expand _init["emb"] (B, H, D) to (B, S, H, D)
         init_emb = _init["emb"]
-        emb = mx.broadcast_to(mx.expand_dims(init_emb, 1), (B, S, H, init_emb.shape[-1]))
+        emb = mx.broadcast_to(
+            mx.expand_dims(init_emb, 1), (B, S, H, init_emb.shape[-1])
+        )
         info["emb"] = emb
 
         # Flatten batch and sample dimensions: (B * S, H, D)
@@ -163,7 +169,7 @@ class JEPA(nn.Module):
             if not isinstance(info_dict[k], mx.array):
                 try:
                     info_dict[k] = mx.array(info_dict[k])
-                except:
+                except Exception:
                     pass
 
         # extract goal dict
@@ -183,7 +189,7 @@ class JEPA(nn.Module):
 
         if "action" in goal:
             goal.pop("action")
-            
+
         goal = self.encode(goal)
 
         info_dict["goal_emb"] = goal["emb"]
