@@ -54,7 +54,6 @@ Whenever the user says *"wow good to know, can you save it to QnA?"* (or similar
 
 * **Automatic Approvals**: Proposals containing `[WIP]` or `WIP` tags in their titles must never be executed automatically. The agent must wait for human feedback.
 * **Timer Safety**: Never use shell-based `sleep` tasks for background polling; use the system `schedule` timer tool to manage sleep cycles asynchronously.
-* **macOS Developer Directory**: If git commands fail or hang requesting Xcode license agreement in non-interactive shells, invoke git with `DEVELOPER_DIR=/Library/Developer/CommandLineTools git <args>` to target CommandLineTools directly.
 * **Python Environment**: Use `uv run` for executing python scripts and tests. With an editable install (`uv pip install -e .`), `PYTHONPATH=.` is not required in the project root workspace.
 
 ---
