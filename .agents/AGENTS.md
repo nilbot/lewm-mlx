@@ -65,7 +65,8 @@ The Superpowers plugin expects design specs and plans at `docs/superpowers/specs
 To maintain a single source of truth without duplicating documents:
 1. **Canonical Store**: All design specifications live in `docs/design/` and all implementation plans live in `docs/plans/`.
 2. **Git Ignored**: `docs/superpowers/` is git-ignored and must never be tracked in the git index.
-3. **Relative Symlinks**: When using Superpowers skills (`brainstorming`, `writing-plans`, `subagent-driven-development`), agents must create and maintain relative symlinks from `docs/superpowers/` to `docs/{design,plans}`:
+3. **Session-Scoped Symlinks**: While a Superpowers skill (`brainstorming`, `writing-plans`, `subagent-driven-development`) is actively running and needs its expected paths, create relative symlinks from `docs/superpowers/` to the canonical stores:
    - `docs/superpowers/specs/<YYYY-MM-DD-topic-design>.md` $\to$ `../../design/<topic>.md`
    - `docs/superpowers/plans/<YYYY-MM-DD-topic>.md` $\to$ `../../plans/<YYYY-MM-DD-topic>.md`
-   Agents must ensure the symlink target names satisfy Superpowers naming conventions (e.g., prefixed with `YYYY-MM-DD`).
+   Symlink names must satisfy Superpowers naming conventions (e.g., prefixed with `YYYY-MM-DD`). The canonical documents stay in `docs/design/` and `docs/plans/`; the symlinks are scaffolding for the skill session only.
+4. **Remove When the Session Ends**: Delete every symlink created for a skill session as soon as that session finishes, and before handing the checkout to another agent or committing. A repository that carries the aliases at rest cannot pass `agents drift`, which reports `docs/superpowers/specs/<YYYY-MM-DD-topic-design>.md` as a misplaced design document.

@@ -9,8 +9,8 @@ it is the record, and this file is only the pointer to it.
 - `docs/design/` — the design still in force
 
 ## Repository Architecture & Guidelines
-- Domain engineering guidelines, commenting standards, safety constraints,
-  and Superpowers skills adaptations are defined in `.agents/AGENTS.md`.
+- Domain engineering guidelines, commenting standards, and safety constraints
+  are defined in `.agents/AGENTS.md`.
 - Repo-specific procedures and skills are located in `.agents/skills/`.
 
 ## Machine Wiring
