@@ -45,25 +45,42 @@ It downloads and processes demonstration trajectories directly from the Hugging 
 
 ## Training on Push-T Mini
 
-Train the world model directly on Push-T demonstration episodes using the integrated training script:
+Train the world model directly on Push-T demonstration episodes using the integrated training pipeline with full diagnostic telemetry:
 
 ```bash
 uv run python lewm_mlx/train.py \
     --dataset pusht_mini \
-    --num-episodes 5 \
-    --epochs 2 \
-    --steps-per-epoch 5 \
+    --num-episodes 200 \
+    --epochs 50 \
+    --steps-per-epoch 20 \
+    --batch-size 16 \
     --img-size 96 \
+    --lr 1e-4 \
+    --grad-breakdown \
+    --eval-fixed \
+    --metrics-path metrics.jsonl \
     --save-path lewm_weights.npz
 ```
 
-To train on synthetic kinematics batches instead:
+### Diagnostic Telemetry Flags
+
+The training script includes real-time telemetry to monitor optimization health and representation geometry:
+
+* `--grad-breakdown`: Displays per-module gradient norms (`enc`, `pred`, `act`, `proj`) to detect submodule disconnection or gradient starvation.
+* `--eval-fixed`: Evaluates on a fixed held-out probe batch every epoch, isolating true model learning from random episode sampling noise.
+* `--metrics-path <path.jsonl>`: Dumps structured JSON Lines telemetry for offline analysis and curve plotting.
+* `--log-interval <N>`: Displays step-level metrics every $N$ steps inside each epoch (default: `0`, epoch-level summary).
+
+### Quick Smoke Test
+
+To verify the training loop with synthetic kinematics batches without downloading datasets:
 
 ```bash
 uv run python lewm_mlx/train.py \
     --dataset synthetic \
     --epochs 2 \
-    --steps-per-epoch 5
+    --steps-per-epoch 5 \
+    --grad-breakdown
 ```
 
 ---
