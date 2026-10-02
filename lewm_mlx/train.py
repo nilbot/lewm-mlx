@@ -232,6 +232,19 @@ def main() -> None:
         default=0.0,
         help="Fraction of episodes held out from training and used for the fixed probe (0 disables the split)",
     )
+    parser.add_argument(
+        "--loss-mode",
+        type=str,
+        choices=["direct", "autoregressive", "composite"],
+        default="direct",
+        help="Prediction loss mode: direct (single jump), autoregressive (unrolled BPTT), composite (teacher-forced multi-horizon)",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=0.7,
+        help="Temporal discount factor gamma for multi-step loss in autoregressive and composite modes",
+    )
     args = parser.parse_args()
 
     if args.seed:
@@ -396,33 +409,101 @@ def main() -> None:
         act_emb = output["act_emb"]  # [B, T, D]
 
         # Extract context embeddings: [B, H, D]
-        ctx_emb = emb[:, : args.history_size, :]
-        ctx_act = act_emb[:, : args.history_size, :]
+        H = args.history_size
+        K = args.num_preds
+        gamma = args.gamma
+        ctx_emb = emb[:, :H, :]
+        ctx_act = act_emb[:, :H, :]
 
-        # Target future embeddings: [B, H, D]
-        tgt_emb = emb[:, args.num_preds :, :]
-        # Predictor forward pass: [B, H, D]
-        pred_emb = model.predict(ctx_emb, ctx_act)
+        if args.loss_mode == "direct" or K == 1:
+            # Direct jump prediction over K steps: [B, H, D]
+            tgt_emb = emb[:, K:, :]
+            pred_emb = model.predict(ctx_emb, ctx_act)
+            pred_loss = mx.mean(mx.square(pred_emb - tgt_emb))
 
-        # Latent prediction mean-squared error
-        pred_loss = mx.mean(mx.square(pred_emb - tgt_emb))
-        # SIGReg expects [T, B, D] for marginal regularization over batch
+            pred_norm = mx.linalg.norm(pred_emb, axis=-1, keepdims=True)  # [B, H, 1]
+            tgt_norm = mx.linalg.norm(tgt_emb, axis=-1, keepdims=True)    # [B, H, 1]
+            cos_sim = mx.mean(
+                mx.sum(pred_emb * tgt_emb, axis=-1, keepdims=True)
+                / (pred_norm * tgt_norm + 1e-8)
+            )
+            pred_l2_norm = mx.mean(pred_norm)
+
+        elif args.loss_mode == "autoregressive":
+            # Autoregressive BPTT multi-step unrolling:
+            # Propagates predictions recursively into context buffer
+            # L_rollout = \sum_{k=1}^K \gamma^{k-1} \|\hat{s}_{H+k-1} - s_{H+k-1}\|_2^2
+            z_curr = ctx_emb  # [B, H, D]
+            a_curr = ctx_act  # [B, H, D]
+
+            step_losses = []
+            step_cos_sims = []
+            discount_weights = []
+
+            for k in range(K):
+                # Predict next-step embedding from current autoregressive context: [B, 1, D]
+                pred_step = model.predict(z_curr, a_curr)[:, -1:, :]
+                tgt_step = emb[:, H + k : H + k + 1, :]  # [B, 1, D]
+
+                w_k = gamma**k
+                discount_weights.append(w_k)
+                step_losses.append(w_k * mx.mean(mx.square(pred_step - tgt_step)))
+
+                p_n = mx.linalg.norm(pred_step, axis=-1, keepdims=True)
+                t_n = mx.linalg.norm(tgt_step, axis=-1, keepdims=True)
+                step_cos = mx.mean(
+                    mx.sum(pred_step * tgt_step, axis=-1, keepdims=True)
+                    / (p_n * t_n + 1e-8)
+                )
+                step_cos_sims.append(step_cos)
+
+                if k < K - 1:
+                    # Append predicted state and future action to autoregressive context
+                    z_curr = mx.concatenate([z_curr[:, 1:, :], pred_step], axis=1)
+                    a_curr = mx.concatenate(
+                        [a_curr[:, 1:, :], act_emb[:, H + k : H + k + 1, :]], axis=1
+                    )
+
+            pred_loss = sum(step_losses) / sum(discount_weights)
+            cos_sim = step_cos_sims[0]
+            pred_l2_norm = mx.mean(p_n)
+
+        elif args.loss_mode == "composite":
+            # Teacher-forced multi-horizon composite prediction:
+            # Evaluates 1-step prediction across sliding historical windows
+            step_losses = []
+            step_cos_sims = []
+            discount_weights = []
+
+            for k in range(K):
+                z_k = emb[:, k : H + k, :]      # [B, H, D]
+                a_k = act_emb[:, k : H + k, :]  # [B, H, D]
+                pred_step = model.predict(z_k, a_k)[:, -1:, :]  # [B, 1, D]
+                tgt_step = emb[:, H + k : H + k + 1, :]         # [B, 1, D]
+
+                w_k = gamma**k
+                discount_weights.append(w_k)
+                step_losses.append(w_k * mx.mean(mx.square(pred_step - tgt_step)))
+
+                p_n = mx.linalg.norm(pred_step, axis=-1, keepdims=True)
+                t_n = mx.linalg.norm(tgt_step, axis=-1, keepdims=True)
+                step_cos = mx.mean(
+                    mx.sum(pred_step * tgt_step, axis=-1, keepdims=True)
+                    / (p_n * t_n + 1e-8)
+                )
+                step_cos_sims.append(step_cos)
+
+            pred_loss = sum(step_losses) / sum(discount_weights)
+            cos_sim = step_cos_sims[0]
+            pred_l2_norm = mx.mean(p_n)
+
+        # SIGReg marginal projection regularization over batch: [T, B, D]
         sigreg_loss = sigreg(emb.transpose(1, 0, 2))
         total_loss = pred_loss + args.sigreg_weight * sigreg_loss
 
-        # Latent space geometry and collapse diagnostics:
-        pred_norm = mx.linalg.norm(pred_emb, axis=-1, keepdims=True)  # [B, H, 1]
-        tgt_norm = mx.linalg.norm(tgt_emb, axis=-1, keepdims=True)    # [B, H, 1]
-        # Cosine similarity between predictions and targets: scalar
-        cos_sim = mx.mean(
-            mx.sum(pred_emb * tgt_emb, axis=-1, keepdims=True)
-            / (pred_norm * tgt_norm + 1e-8)
-        )
-        # Batch dispersion across channel dimensions (detects dimensional or representation collapse)
+        # Representation dispersion metrics
         emb_std = mx.mean(mx.std(emb, axis=0))
-        # Embedding and prediction L2 energy
         emb_norm = mx.mean(mx.linalg.norm(emb, axis=-1))
-        pred_l2_norm = mx.mean(pred_norm)
 
         metrics = {
             "loss": total_loss,
