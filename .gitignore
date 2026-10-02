@@ -12,3 +12,4 @@ wandb/
 *.npz
 docs/superpowers/
 pusht_demo.png
+*.jsonl
