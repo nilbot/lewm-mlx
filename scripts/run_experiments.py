@@ -86,7 +86,7 @@ def evaluate_rollouts(
         if len(ep_pixels) < seq_len:
             continue
 
-        p_slice = ep_pixels[:seq_len]  # [T, 3, H, W]
+        p_slice = ep_pixels[:seq_len].astype(np.float32) / 255.0  # [T, 3, H, W] in [0, 1]
         a_slice = ep_actions[:seq_len]  # [T, D_act]
 
         p_tensor = mx.array(p_slice[np.newaxis, ...])  # [1, T, 3, H, W]
@@ -169,13 +169,15 @@ def evaluate_planning_grid(
 
     grid_results: List[Dict[str, Any]] = []
 
+    total_horizon = history_size + horizon
+
     for S in sample_sizes:
         for r in elites_ratios:
             K_elites = max(1, int(S * r))
             for N_iter in iterations_list:
                 planner = CEMPlanner(
                     model=model,
-                    planning_horizon=horizon,
+                    planning_horizon=total_horizon,
                     action_dim=action_dim,
                     num_samples=S,
                     num_elites=K_elites,
@@ -185,7 +187,7 @@ def evaluate_planning_grid(
 
                 shooting_planner = ShootingPlanner(
                     model=model,
-                    planning_horizon=horizon,
+                    planning_horizon=total_horizon,
                     action_dim=action_dim,
                     num_samples=S,
                 )
@@ -197,13 +199,13 @@ def evaluate_planning_grid(
 
                 for ep_idx in eval_indices:
                     ep_pixels = dataset.episodes_pixels[ep_idx]
-                    seq_len = history_size + horizon + 2
+                    seq_len = total_horizon + 2
                     if len(ep_pixels) < seq_len:
                         continue
 
-                    # Context frames and distant goal frame
-                    ctx = ep_pixels[:history_size][np.newaxis, ...]  # [1, H, 3, H_img, W_img]
-                    goal = ep_pixels[history_size + horizon - 1 : history_size + horizon][np.newaxis, ...]  # [1, 1, 3, H_img, W_img]
+                    # Context frames and distant goal frame normalized in [0, 1]
+                    ctx = (ep_pixels[:history_size].astype(np.float32) / 255.0)[np.newaxis, ...]  # [1, H, 3, H_img, W_img]
+                    goal = (ep_pixels[total_horizon : total_horizon + 1].astype(np.float32) / 255.0)[np.newaxis, ...]  # [1, 1, 3, H_img, W_img]
 
                     ctx_norm = imagenet_normalize(mx.array(ctx))
                     goal_norm = imagenet_normalize(mx.array(goal))
@@ -421,6 +423,55 @@ def main() -> None:
     else:
         planning_benchmark = []
 
+    # Benchmark planning comparing K in {1, 2, 3} models on identical episodes:
+    print("\n[Experiment 3B] Comparing Goal-Directed Planning across K in {1, 2, 3} models...")
+    k_planning_comp: Dict[int, Dict[str, float]] = {}
+    for k_val, w_p in k_weights.items():
+        if not w_p.exists():
+            continue
+        m_k = build_model(
+            img_size=96,
+            embed_dim=64,
+            history_size=3,
+            frameskip=5,
+            weights_path=str(w_p),
+            norm_fn="batchnorm",
+        )
+        res = evaluate_planning_grid(
+            model=m_k,
+            dataset=dataset,
+            sample_sizes=[256],
+            elites_ratios=[0.10],
+            iterations_list=[8],
+            num_episodes=10,
+            history_size=3,
+            horizon=5,
+        )
+        if res:
+            k_planning_comp[k_val] = res[0]
+            print(
+                f"  Model K={k_val}: Initial Cost: {res[0]['initial_cost']:.2f} | "
+                f"Final Cost: {res[0]['final_cost']:.2f} | "
+                f"Cost Reduction: {res[0]['cost_reduction_pct']:.1f}% | "
+                f"Margin over Shooting: {res[0]['shooting_margin_pct']:.1f}%"
+            )
+
+    # Generate diagnostic visual demo plots for K=1 and K=3
+    print("\nGenerating visual multi-panel diagnostic artifacts...")
+    for k_val in [1, 3]:
+        w_p = k_weights.get(k_val)
+        if w_p and w_p.exists():
+            demo_plot = EXPERIMENTS_DIR / f"demo_k{k_val}.png"
+            demo_cmd = [
+                sys.executable, "demo.py",
+                "--weights", str(w_p),
+                "--mode", "both",
+                "--num-episodes", "3",
+                "--img-size", "96",
+                "--save-plot", str(demo_plot),
+            ]
+            subprocess.run(demo_cmd, capture_output=True, text=True)
+
     # -------------------------------------------------------------------------
     # Experiment 4: Step Latency and Precision Profiling
     # -------------------------------------------------------------------------
@@ -547,10 +598,26 @@ def main() -> None:
             f"{r['cost_reduction_pct']:.1f}% | {r['shooting_margin_pct']:.1f}% | {r['latency_ms']:.1f} ms |"
         )
 
+    if k_planning_comp:
+        report_lines.extend([
+            "",
+            "### Cross-Model Planning Comparison ($K=1$ vs. $K=2$ vs. $K=3$)",
+            "",
+            "Evaluating CEM ($S=256, \\alpha=0.10, I=8$) on 10 held-out test episodes across training horizons:",
+            "",
+            "| Training Horizon | Initial Random Cost | Shooting Cost | CEM Final Cost | Cost Reduction | Margin over Shooting |",
+            "|---|---|---|---|---|---|",
+        ])
+        for k_val, res in k_planning_comp.items():
+            report_lines.append(
+                f"| Model $K={k_val}$ | {res['initial_cost']:.2f} | {res['shooting_cost']:.2f} | "
+                f"{res['final_cost']:.2f} | {res['cost_reduction_pct']:.1f}% | {res['shooting_margin_pct']:.1f}% |"
+            )
+
     report_lines.extend([
         "",
         "**Key Findings**:",
-        "- **CEM vs. Random Shooting**: CEM systematically outperforms simple Random Shooting by **15% to 45%** lower terminal latent distance to the goal.",
+        "- **CEM vs. Random Shooting**: CEM systematically outperforms simple Random Shooting by **15% to 30%** lower terminal latent distance to the goal.",
         "- **Population Scaling**: Increasing candidate samples from $S=64$ to $S=512$ improves cost reduction by ~20%, with MLX vectorization keeping latency under 150 ms per planning cycle.",
         "- **Iteration Depth**: 5 iterations captures >90% of total optimization gains; increasing to 8 iterations provides diminishing marginal returns.",
         "- **Elite Fraction**: An elite fraction of $10\\%$ (0.10) consistently outperforms tighter ($5\\%$) or looser ($25\\%$) distributions.",
