@@ -104,8 +104,10 @@ uv run python demo.py \
     --mode both \
     --num-episodes 5 \
     --img-size 96 \
-    --save-plot pusht_demo.png
+    --save-plot assets/pusht_demo.png
 ```
+
+![Push-T Demonstration Rollout and CEM Planning](assets/pusht_demo.png)
 
 ### Running Specific Modes
 
@@ -178,7 +180,9 @@ uv run python lewm_mlx/train.py \
 1. **Optimal Horizon**: Training with $K=2$ produces the sharpest goal-directed planning landscape (**80.7% cost reduction**) and the highest linear physical state decoding accuracy ($R^2 = 0.4937$, test MAE $50.34$ px).
 2. **SIGReg Pareto Sweet Spot**: $\lambda_{\text{SIGReg}} = 0.09$ balances representation variance against prediction MSE. $\lambda \le 0.01$ collapses embeddings to a constant subspace ($R^2 = 0.037$), while $\lambda \ge 0.25$ over-regularizes metric distances.
 3. **Metric Space Preservation**: Longer prediction horizons act as spatial regularizers: latent Euclidean distance correlates with physical Euclidean distance with Pearson $r = +0.510$ ($K=3$) and $r = +0.419$ ($K=2$).
-4. **Diagnostic Visual Artifact**: The full 3-panel comparative diagnostic figure is available at `outputs/experiments/research_insights.png`.
+4. **Diagnostic Visual Artifacts**: The 3-panel benchmark figure below summarizes rollout error compounding, metric space preservation, and CEM planning convergence:
+
+![Le World Model Fast-Tier Research Insights](assets/research_insights.png)
 
 ---
 

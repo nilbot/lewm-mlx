@@ -207,7 +207,9 @@ Evaluating step-by-step autoregressive rollout degradation for horizons $k \in \
 
 **Key Takeaways**:
 - **Rollout Stability vs. Planning Landscape**: While Autoregressive BPTT (`ar_k3`) exhibits the flattest rollout degradation slope (only a $2\times$ MSE increase from $k=1$ to $k=8$), Model $K=2$ produces the most well-conditioned planning cost landscape, achieving an **80.7% cost reduction** and the lowest terminal cost ($5.95$).
-- **Visual Synthesis**: The complete comparative analysis is visualized in `outputs/experiments/research_insights.png`.
+- **Visual Synthesis**: The complete comparative analysis is visualized below:
+
+![Le World Model Fast-Tier Research Insights](../../assets/research_insights.png)
 
 ---
 
@@ -218,8 +220,8 @@ Evaluating step-by-step autoregressive rollout degradation for horizons $k \in \
   - `scripts/benchmark_horizons.py`: Multi-horizon step-by-step rollout and CEM evaluation
   - `scripts/generate_research_plots.py`: Generates publication-grade 3-panel figure
 - Visual diagnostic artifacts:
-  - `outputs/experiments/research_insights.png`: Rollout error, metric preservation, and CEM planning curves
-  - `outputs/experiments/demo_k1.png`, `demo_k3.png`: Visual multi-step trajectory panels
+  - [assets/research_insights.png](../../assets/research_insights.png): Rollout error compounding, metric space preservation, and CEM planning convergence
+  - [assets/pusht_demo.png](../../assets/pusht_demo.png): Demonstration context frames, target goal, latent MSE rollout trajectory, and CEM optimization curves
 - Checkpoints & Raw telemetry:
   - `outputs/experiments/lewm_{k1,k2,k3,ar_k3,comp_k3}.npz`
   - `outputs/experiments/horizon_and_planning_benchmark.json`

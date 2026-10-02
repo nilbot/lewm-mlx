@@ -130,8 +130,14 @@ def main() -> None:
 
     plt.tight_layout()
     plt.savefig(out_plot)
+
+    # Save to tracked assets directory for GitHub markdown rendering
+    assets_dir = Path("assets")
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    assets_plot = assets_dir / "research_insights.png"
+    plt.savefig(assets_plot)
     plt.close()
-    print(f"Research diagnostic figure successfully saved to: {out_plot}")
+    print(f"Research diagnostic figure successfully saved to: {out_plot} and {assets_plot}")
 
 
 if __name__ == "__main__":
