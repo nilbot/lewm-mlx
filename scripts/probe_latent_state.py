@@ -138,6 +138,8 @@ def run_probing() -> Dict[str, Dict[str, float]]:
         "k1": Path("outputs/experiments/lewm_k1.npz"),
         "k2": Path("outputs/experiments/lewm_k2.npz"),
         "k3": Path("outputs/experiments/lewm_k3.npz"),
+        "ar_k3": Path("outputs/experiments/lewm_ar_k3.npz"),
+        "comp_k3": Path("outputs/experiments/lewm_comp_k3.npz"),
     }
 
     results: Dict[str, Dict[str, float]] = {}
