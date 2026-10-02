@@ -11,5 +11,5 @@ wandb/
 *.pt
 *.npz
 docs/superpowers/
-pusht_demo.png
+/pusht_demo.png
 *.jsonl
